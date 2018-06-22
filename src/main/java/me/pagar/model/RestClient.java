@@ -3,22 +3,15 @@ package me.pagar.model;
 import com.google.common.base.Strings;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonSyntaxException;
+
 import me.pagar.util.JSONUtils;
+import me.pagar.security.TLSSocketFactory;
+import me.pagar.security.TSLSocketConnectionFactory;
 
 import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.TrustManagerFactory;
 import javax.ws.rs.HttpMethod;
 import javax.ws.rs.core.UriBuilder;
 import java.io.*;
-import java.net.URL;
-import java.security.KeyManagementException;
-import java.security.KeyStore;
-import java.security.KeyStoreException;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.Certificate;
-import java.security.cert.CertificateException;
-import java.security.cert.CertificateFactory;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -42,31 +35,6 @@ public class RestClient {
 
     private InputStream is;
 
-    private void setupSecureConnection(final HttpsURLConnection httpClient) throws KeyStoreException,
-            IOException, CertificateException, NoSuchAlgorithmException, KeyManagementException {
-        final URL certFile = Thread.currentThread().getContextClassLoader()
-                .getResource("pagarme.crt");
-
-        if (null == certFile) {
-            return;
-        }
-
-        final Certificate cert = CertificateFactory.getInstance("X.509")
-                .generateCertificate(certFile.openStream());
-
-        final KeyStore keyStore = KeyStore.getInstance(KeyStore.getDefaultType());
-        keyStore.load(null, null);
-        keyStore.setCertificateEntry("pagarme", cert);
-
-        final TrustManagerFactory tmf = TrustManagerFactory.getInstance("X.509");
-        tmf.init(keyStore);
-
-        final SSLContext ctx = SSLContext.getInstance("TLS");
-        ctx.init(null, tmf.getTrustManagers(), null);
-
-        httpClient.setSSLSocketFactory(ctx.getSocketFactory());
-    }
-
     public RestClient(final String method, final String url) throws PagarMeException {
         this(method, url, null, null);
     }
@@ -78,6 +46,8 @@ public class RestClient {
     @SuppressWarnings("unchecked")
     public RestClient(final String method, final String url, Map<String, Object> parameters,
                       Map<String, String> headers) throws PagarMeException {
+        System.setProperty("https.protocols", "TLSv1.2");
+
         this.method = method;
         this.url = url;
         this.parameters = parameters;
@@ -102,7 +72,10 @@ public class RestClient {
 
             try {
                 final UriBuilder builder = UriBuilder.fromPath(this.url);
-                builder.queryParam(API_KEY, PagarMe.getApiKey());
+
+                if (!this.url.equals("https://tls12.pagar.me")) {
+                    builder.queryParam(API_KEY, PagarMe.getApiKey());
+                }
 
                 if (this.parameters.containsKey(AMOUNT) && this.parameters.size() == 1) {
                     builder.queryParam(AMOUNT, this.parameters.remove(AMOUNT));
@@ -124,7 +97,15 @@ public class RestClient {
                 httpClient.setDoInput(true);
                 httpClient.setDoOutput(false);
 
-                setupSecureConnection(httpClient);
+                
+                String version = System.getProperty("java.version");
+                int sysMajorVersion = Integer.parseInt(String.valueOf(version.charAt (2)));
+                
+                if(sysMajorVersion == 6) {
+                    httpClient.setSSLSocketFactory(new TSLSocketConnectionFactory());
+                } else {
+                    httpClient.setSSLSocketFactory(new TLSSocketFactory());
+                }
 
                 if (headers.size() > 0) {
 
